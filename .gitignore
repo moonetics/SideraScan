@@ -1,0 +1,33 @@
+# Sensitive local planning docs
+PRD*.md
+DATABASE_SCHEMA.md
+TECH_STACK_LIBRARIES.md
+WEB_PHASE_PLAN.md
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
