@@ -1,9 +1,3 @@
-# Sensitive local planning docs
-PRD*.md
-DATABASE_SCHEMA.md
-TECH_STACK_LIBRARIES.md
-WEB_PHASE_PLAN.md
-
 # Environment and secrets
 .env
 .env.*
