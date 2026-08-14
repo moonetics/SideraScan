@@ -1,0 +1,269 @@
+{
+  "name": "SideraScan - AI Review",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "siderascan-scan-completed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "caa71d1e-481f-4d9e-9c6e-0a12b90a4101",
+      "name": "scan.completed webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        300
+      ],
+      "webhookId": "siderascan-scan-completed"
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst crypto = require('crypto');\n\nconst expectedEvent = 'scan.completed';\nconst input = $input.first().json;\nconst headersInput = input.headers || {};\nconst headers = {};\n\nfor (const [key, value] of Object.entries(headersInput)) {\n  headers[String(key).toLowerCase()] = Array.isArray(value) ? String(value[0]) : String(value);\n}\n\nfunction reject(message) {\n  const error = new Error(message);\n  error.name = 'SideraScanWebhookRejected';\n  throw error;\n}\n\nconst timestamp = headers['x-siderascan-timestamp'];\nconst signature = headers['x-siderascan-signature'];\nconst idempotencyKey = headers['x-idempotency-key'];\nconst eventHeader = headers['x-siderascan-event'];\nconst body = input.body || {};\n\nif (!timestamp || !signature || !idempotencyKey) reject('Missing required SideraScan webhook headers.');\nif (eventHeader && eventHeader !== expectedEvent) reject('Unexpected SideraScan event: ' + eventHeader);\nif (body.event && body.event !== expectedEvent) reject('Unexpected body event: ' + body.event);\nif (!/^sha256=[a-f0-9]{64}$/i.test(signature)) reject('Invalid SideraScan signature format.');\n\nconst unixSeconds = Number(timestamp);\nif (!Number.isFinite(unixSeconds)) reject('Invalid SideraScan timestamp.');\n\nconst tolerance = Number(readEnv('SIDERASCAN_SIGNATURE_TOLERANCE_SECONDS', '300'));\nconst ageSeconds = Math.abs(Date.now() / 1000 - unixSeconds);\nif (ageSeconds > tolerance) reject('Expired SideraScan signature.');\n\nconst secret = readEnv('SIDERASCAN_WEBHOOK_SECRET');\nif (!secret || secret.includes('<')) reject('SideraScan webhook secret is not configured in n8n.');\n\nconst signedBody = JSON.stringify(body ?? {});\nconst expectedSignature = 'sha256=' + crypto\n  .createHmac('sha256', secret)\n  .update(timestamp + '.' + signedBody)\n  .digest('hex');\n\nconst providedBuffer = Buffer.from(signature);\nconst expectedBuffer = Buffer.from(expectedSignature);\nif (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) reject('Invalid SideraScan signature.');\n\nreturn [{ json: { response: { status: 'accepted', event: expectedEvent, idempotencyKey }, request: { body, idempotencyKey, event: expectedEvent } } }];"
+      },
+      "id": "e2af1bfc-22db-4a1e-a142-c6b91d174547",
+      "name": "Verify SideraScan signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c1df506c-3b1c-4d77-b0c3-19a036b3e2c4",
+      "name": "Accepted response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        760,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst crypto = require('crypto');\n\nconst input = $input.first().json;\nconst body = input.request?.body || {};\nconst scanSessionId = body.scanSessionId || body.scanId;\nif (!scanSessionId || typeof scanSessionId !== 'string') throw new Error('scanSessionId or scanId is required for AI review.');\n\nconst provider = (readEnv('AI_PROVIDER', 'gemini')).toLowerCase();\nif (provider !== 'gemini') throw new Error('Unsupported AI_PROVIDER for this workflow template: ' + provider);\n\nfunction take(value, fallback = null) { return value === undefined || value === null ? fallback : value; }\nfunction safeObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }\nfunction safeArray(value, max = 50) { return Array.isArray(value) ? value.slice(0, max) : []; }\n\nconst normalized = {\n  scanSessionId,\n  account: { id: take(body.accountId), name: take(body.accountName) },\n  playerLabel: take(body.playerLabel),\n  risk: { score: take(body.riskScore, 0), severity: take(body.severity, 'INFO'), findingSeverityCounts: safeObject(body.findingSeverityCounts) },\n  counts: { findingCount: take(body.findingCount, 0), evidenceCount: take(body.evidenceCount, 0) },\n  scanner: { version: take(body.scannerVersion) },\n  device: safeObject(body.device),\n  forensicSummary: safeObject(body.forensicSummary),\n  reviewContext: safeObject(body.reviewContext),\n  dashboardUrl: take(body.dashboardUrl),\n  topFindings: safeArray(body.topFindings, 20),\n  evidenceReferences: safeArray(body.evidenceReferences, 30),\n  keyIndicators: safeArray(body.keyIndicators, 30),\n  generatedFrom: 'siderascan-redacted-scan-completed-event'\n};\n\nconst inputHash = crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');\nreturn [{ json: { idempotencyKey: input.request?.idempotencyKey, provider, model: readEnv('GEMINI_MODEL', 'gemini-3.6-flash'), promptVersion: readEnv('SIDERASCAN_AI_PROMPT_VERSION', 'n8n-ai-review-v2'), sideraScanApiBaseUrl: readEnv('SIDERASCAN_API_BASE_URL', 'http://host.docker.internal:4000'), normalized, inputHash } }];"
+      },
+      "id": "b8fc00bb-600e-4f29-8f87-2d0a8043d3af",
+      "name": "Normalize redacted scan payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst input = $input.first().json;\nconst schemaDescription = {\n  scanSessionId: 'string UUID from SideraScan payload',\n  assessment: 'short string, max 80 chars. Mention the dominant review theme, not a final verdict.',\n  confidence: 'integer 0-100',\n  summaryForModerator: 'moderator-facing advisory summary. Include a short chronological timeline when reviewContext.recentTimeline exists, mention active/open process context when reviewContext.activeProcesses exists, and distinguish historical artifacts from active runtime signals.',\n  summaryForPlayer: 'optional neutral player-facing explanation, max 5000 chars',\n  recommendedAction: 'one of NO_ACTION, MONITOR, REQUEST_RESCAN, MANUAL_REVIEW, ESCALATE',\n  keyIndicators: 'array of short strings. Prefer concrete findings/processes/timeline events from topFindings/reviewContext.',\n  possibleFalsePositives: 'array of short strings. Include benign explanations for historical installers, normal signed drivers, overlays, and context-only artifacts.',\n  contradictions: 'array of short strings. Mention weak evidence, old timestamps, missing active correlation, or low risk score where applicable.',\n  moderatorChecklist: 'array of actionable checklist strings. Include timeline correlation, active process verification, and evidence-reference checks when data exists.',\n  questionsForPlayer: 'array of short strings',\n  evidenceReferences: 'array of { findingId?, evidenceId?, label?, note? } using only IDs/labels present in topFindings/evidenceReferences',\n  model: 'model id',\n  promptVersion: 'prompt version',\n  generatedAt: 'ISO timestamp',\n  inputHash: 'sha256 hash of normalized redacted input'\n};\nconst prompt = [\n  'You are an advisory anti-cheat scan reviewer for SideraScan.',\n  'You only review redacted metadata prepared by the SideraScan backend. Do not claim certainty beyond the evidence.',\n  'Never recommend AUTO_BAN, direct ban, punishment, HWID mark, or any final automated action.',\n  'Allowed recommendedAction values: NO_ACTION, MONITOR, REQUEST_RESCAN, MANUAL_REVIEW, ESCALATE.',\n  'Prefer MANUAL_REVIEW or ESCALATE for serious concerns. Use NO_ACTION or MONITOR when evidence is weak/context-only.',\n  'Treat forensic signals as advisory. Multiple supporting signals are stronger than one filename or one historical artifact.',\n  'If reviewContext.recentTimeline exists, summarize the strongest 3-6 chronological events with timestamps or relative ordering.',\n  'If reviewContext.activeProcesses exists, mention notable active/open applications only when relevant to the scan conclusion.',\n  'Do not imply old Prefetch/Downloads/Recent/JumpList timestamps prove activity during the protected scan unless correlated with active process/game timeline.',\n  'Use evidenceReferences only from topFindings/evidenceReferences. Do not invent evidence IDs.',\n  'Return JSON only. No markdown, no code fences.',\n  'Required JSON schema description:', JSON.stringify(schemaDescription),\n  'Redacted scan context:', JSON.stringify(input.normalized)\n].join('\\n\\n');\nconst geminiRequest = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.15, maxOutputTokens: 6144, responseMimeType: 'application/json' } };\nreturn [{ json: { ...input, prompt, geminiUrl: 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(input.model) + ':generateContent', geminiRequest } }];"
+      },
+      "id": "3a9f9305-0614-4b4f-9f46-84a8c05e6977",
+      "name": "Build AI review prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.geminiUrl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.geminiRequest) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "920c8d9c-c2d5-4f35-8d51-882582aa4887",
+      "name": "Call Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nfunction getContext() { try { return $('Build AI review prompt').first().json; } catch (error) { return {}; } }\nconst response = $input.first().json;\nconst context = getContext();\nfunction fail(message) { const error = new Error(message); error.name = 'SideraScanAIReviewRejected'; throw error; }\nfunction truncate(value, max) { if (value === undefined || value === null) return undefined; return String(value).slice(0, max); }\nfunction stringArray(value, maxItems = 30, maxLen = 500) {\n  if (!Array.isArray(value)) return [];\n  return value.slice(0, maxItems).map((item) => {\n    if (typeof item === 'string') return truncate(item, maxLen);\n    if (item && typeof item === 'object') return truncate(item.item || item.text || item.label || JSON.stringify(item), maxLen);\n    return truncate(item, maxLen);\n  }).filter(Boolean);\n}\nfunction parseJSONText(text) {\n  let trimmed = String(text || '').trim();\n  if (!trimmed) fail('Gemini returned an empty response.');\n  const fence = String.fromCharCode(96, 96, 96);\n  if (trimmed.toLowerCase().startsWith(fence + 'json')) trimmed = trimmed.slice(7).trim();\n  else if (trimmed.startsWith(fence)) trimmed = trimmed.slice(3).trim();\n  if (trimmed.endsWith(fence)) trimmed = trimmed.slice(0, -3).trim();\n  try { return JSON.parse(trimmed); } catch (error) { fail('Gemini returned malformed JSON.'); }\n}\nconst parts = response.candidates?.[0]?.content?.parts || [];\nconst text = parts.map((part) => part.text || '').join('').trim();\nconst ai = parseJSONText(text);\nconst allowedActions = new Set(['NO_ACTION', 'MONITOR', 'REQUEST_RESCAN', 'MANUAL_REVIEW', 'ESCALATE']);\nconst recommendedAction = String(ai.recommendedAction || '').toUpperCase();\nif (!allowedActions.has(recommendedAction)) fail('Gemini recommended an unsupported action.');\nconst combinedText = JSON.stringify(ai).toLowerCase();\nif (/auto[-s]?ban|automatic ban|ban immediately|permanent ban|issue ban|apply ban|hwid ban|hardware ban/.test(combinedText)) fail('Gemini output attempted a final ban or punishment action.');\nconst uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst evidenceReferences = Array.isArray(ai.evidenceReferences) ? ai.evidenceReferences.slice(0, 30).map((ref) => {\n  const row = {};\n  if (ref && typeof ref === 'object') {\n    if (typeof ref.findingId === 'string' && uuidPattern.test(ref.findingId)) row.findingId = ref.findingId;\n    if (typeof ref.evidenceId === 'string' && uuidPattern.test(ref.evidenceId)) row.evidenceId = ref.evidenceId;\n    if (ref.label) row.label = truncate(ref.label, 160);\n    if (ref.note) row.note = truncate(ref.note, 500);\n  }\n  return Object.keys(row).length > 0 ? row : null;\n}).filter(Boolean) : [];\nconst scanSessionId = context.normalized?.scanSessionId || ai.scanSessionId;\nif (!scanSessionId || !uuidPattern.test(scanSessionId)) fail('scanSessionId must be a valid UUID for SideraScan callback.');\nconst review = {\n  scanSessionId,\n  assessment: truncate(ai.assessment || 'AI advisory review', 80),\n  confidence: Math.max(0, Math.min(100, Math.round(Number(ai.confidence ?? 50)))),\n  summaryForModerator: truncate(ai.summaryForModerator || 'AI review completed with limited detail.', 5000),\n  summaryForPlayer: truncate(ai.summaryForPlayer || '', 5000),\n  recommendedAction,\n  keyIndicators: stringArray(ai.keyIndicators),\n  possibleFalsePositives: stringArray(ai.possibleFalsePositives),\n  contradictions: stringArray(ai.contradictions),\n  moderatorChecklist: stringArray(ai.moderatorChecklist),\n  questionsForPlayer: stringArray(ai.questionsForPlayer),\n  evidenceReferences,\n  model: truncate(context.model || ai.model || 'gemini', 120),\n  promptVersion: truncate(context.promptVersion || ai.promptVersion || 'n8n-ai-review-v1', 80),\n  inputHash: truncate(context.inputHash || ai.inputHash, 128),\n  generatedAt: new Date(ai.generatedAt || Date.now()).toISOString()\n};\nreturn [{ json: { review, callbackUrl: (context.sideraScanApiBaseUrl || 'http://host.docker.internal:4000') + '/scan-reviews', callbackEvent: 'scan.reviewed', callbackIdempotencyKey: 'scan.reviewed:' + review.scanSessionId + ':' + String(review.inputHash || '').slice(0, 16) } }];"
+      },
+      "id": "a307be1d-01dc-4288-8935-dc8965514d4d",
+      "name": "Parse and validate AI JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst crypto = require('crypto');\nconst input = $input.first().json;\nconst secret = readEnv('SIDERASCAN_WEBHOOK_SECRET');\nif (!secret || secret.includes('<')) throw new Error('SideraScan webhook secret is not configured in n8n.');\nconst timestamp = Math.floor(Date.now() / 1000).toString();\nconst bodyString = JSON.stringify(input.review);\nconst signature = 'sha256=' + crypto.createHmac('sha256', secret).update(timestamp + '.' + bodyString).digest('hex');\nreturn [{ json: { callbackUrl: input.callbackUrl, callbackBodyString: bodyString, callbackHeaders: { 'Content-Type': 'application/json', 'x-siderascan-timestamp': timestamp, 'x-siderascan-signature': signature, 'x-idempotency-key': input.callbackIdempotencyKey, 'x-siderascan-event': input.callbackEvent } } }];"
+      },
+      "id": "1d3656a1-8505-4485-b1ad-43aff00bd1ec",
+      "name": "Sign SideraScan callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-siderascan-timestamp",
+              "value": "={{ $json.callbackHeaders[\"x-siderascan-timestamp\"] }}"
+            },
+            {
+              "name": "x-siderascan-signature",
+              "value": "={{ $json.callbackHeaders[\"x-siderascan-signature\"] }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.callbackHeaders[\"x-idempotency-key\"] }}"
+            },
+            {
+              "name": "x-siderascan-event",
+              "value": "={{ $json.callbackHeaders[\"x-siderascan-event\"] }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.callbackBodyString }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "aa50a844-ad14-427f-a05c-5ee96f07768a",
+      "name": "POST /scan-reviews",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "scan.completed webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify SideraScan signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify SideraScan signature": {
+      "main": [
+        [
+          {
+            "node": "Accepted response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize redacted scan payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize redacted scan payload": {
+      "main": [
+        [
+          {
+            "node": "Build AI review prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI review prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Gemini": {
+      "main": [
+        [
+          {
+            "node": "Parse and validate AI JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and validate AI JSON": {
+      "main": [
+        [
+          {
+            "node": "Sign SideraScan callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign SideraScan callback": {
+      "main": [
+        [
+          {
+            "node": "POST /scan-reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

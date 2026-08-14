@@ -1,0 +1,903 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GlobalRole {
+  SUPER_ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum AccountRole {
+  ACCOUNT_OWNER
+  MODERATOR
+  VIEWER
+}
+
+enum ScannerKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum ScanStatus {
+  CREATED
+  KEY_VALIDATED
+  CONSENT_ACCEPTED
+  RUNNING
+  UPLOADING
+  COMPLETED
+  PARTIAL
+  FAILED
+  PENDING_AI_REVIEW
+  AI_REVIEWED
+  PENDING_MODERATOR
+  NEEDS_RESCAN
+  CLEARED
+  FLAGGED
+  ESCALATED
+}
+
+enum ScanReviewStatus {
+  UNREVIEWED
+  PENDING
+  FAILED
+  REVIEWED
+  CLEARED
+  FLAGGED
+  ESCALATED
+}
+
+enum AiRecommendedAction {
+  NO_ACTION
+  MONITOR
+  REQUEST_RESCAN
+  MANUAL_REVIEW
+  ESCALATE
+}
+
+enum AutomationEventStatus {
+  PENDING
+  SENT
+  FAILED
+  DISABLED
+}
+
+enum MonitoringSeverity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
+}
+
+enum AlertNotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  DISABLED
+}
+
+enum Severity {
+  INFO
+  CLEAN
+  WARNING
+  SEVERE
+  CRITICAL
+}
+
+enum FindingCategory {
+  OVERVIEW
+  DEVICE
+  PROCESS
+  FILE
+  FILE_LOG
+  UTILITY
+  WINDOWS_ITEM
+  LAUNCHER_PROFILE
+  CLIENT_MOD_ASSET
+  CUSTOM_DETECTION
+  INTEGRITY
+  NETWORK
+  AI
+}
+
+enum DeviceMarkStatus {
+  BANNED
+  SUSPICIOUS
+  TRUSTED
+  CLEARED
+}
+
+enum DeviceMarkScope {
+  GLOBAL
+  ACCOUNT
+}
+
+enum FingerprintConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum DetectionRuleScope {
+  GLOBAL
+  ACCOUNT
+}
+
+enum DetectionRuleType {
+  PROCESS_NAME
+  FILE_HASH
+  PATH_PATTERN
+  STRING_SIGNATURE
+}
+
+enum DetectionSampleStatus {
+  EXTRACTED
+  PURGED
+  FAILED
+}
+
+model User {
+  id                       String            @id @default(uuid()) @db.Uuid
+  email                    String            @unique @db.VarChar(255)
+  username                 String            @unique @db.VarChar(80)
+  passwordHash             String            @map("password_hash")
+  displayName              String            @map("display_name") @db.VarChar(120)
+  globalRole               GlobalRole        @default(USER) @map("global_role")
+  status                   UserStatus        @default(ACTIVE)
+  lastLoginAt              DateTime?         @map("last_login_at") @db.Timestamptz(3)
+  createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt                DateTime?         @map("deleted_at") @db.Timestamptz(3)
+  createdAccounts          Account[]         @relation("AccountCreatedBy")
+  accountMemberships       UserAccount[]
+  auditLogs                AuditLog[]        @relation("AuditActor")
+  createdScannerKeys       ScannerKey[]      @relation("ScannerKeyCreatedBy")
+  revokedScannerKeys       ScannerKey[]      @relation("ScannerKeyRevokedBy")
+  markedDeviceMarks        DeviceMark[]      @relation("DeviceMarkMarkedBy")
+  revokedDeviceMarks       DeviceMark[]      @relation("DeviceMarkRevokedBy")
+  createdDetectionRules    DetectionRule[]   @relation("DetectionRuleCreatedBy")
+  uploadedDetectionSamples DetectionSample[] @relation("DetectionSampleUploadedBy")
+  securityEvents           SecurityEvent[]   @relation("SecurityEventActor")
+  executorIntelSettings    ExecutorIntelligenceSetting[] @relation("ExecutorIntelUpdatedBy")
+
+  @@index([status])
+  @@map("users")
+}
+
+model Account {
+  id               String              @id @default(uuid()) @db.Uuid
+  name             String              @db.VarChar(160)
+  slug             String              @unique @db.VarChar(120)
+  status           AccountStatus       @default(ACTIVE)
+  createdById      String?             @map("created_by") @db.Uuid
+  createdBy        User?               @relation("AccountCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  memberships      UserAccount[]
+  auditLogs        AuditLog[]
+  scannerKeys      ScannerKey[]
+  scanSessions     ScanSession[]
+  scanResults      ScanResult[]
+  scanFindings     ScanFinding[]
+  scanModules      ScanModule[]
+  scanEvidence     ScanEvidence[]
+  launcherProfiles LauncherProfile[]
+  clientModAssets  ClientModAsset[]
+  processTimes     ProcessTime[]
+  fileLogs         FileLog[]
+  deviceLinks      DeviceAccountLink[]
+  deviceMarks      DeviceMark[]
+  detectionRules   DetectionRule[]
+  detectionSamples DetectionSample[]
+  aiReviews        AiReview[]
+  automationEvents AutomationEvent[]
+  securityEvents   SecurityEvent[]
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt        DateTime?           @map("deleted_at") @db.Timestamptz(3)
+
+  @@index([status])
+  @@map("accounts")
+}
+
+model UserAccount {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  accountId String      @map("account_id") @db.Uuid
+  role      AccountRole
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account   Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([userId, accountId])
+  @@index([accountId])
+  @@index([role])
+  @@map("user_accounts")
+}
+
+model ScannerKey {
+  id                     String           @id @default(uuid()) @db.Uuid
+  accountId              String           @map("account_id") @db.Uuid
+  name                   String           @db.VarChar(120)
+  keyPrefix              String           @map("key_prefix") @db.VarChar(32)
+  keyHash                String           @unique @map("key_hash")
+  status                 ScannerKeyStatus @default(ACTIVE)
+  createdById            String?          @map("created_by") @db.Uuid
+  revokedById            String?          @map("revoked_by") @db.Uuid
+  account                Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdBy              User?            @relation("ScannerKeyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  revokedBy              User?            @relation("ScannerKeyRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lastUsedAt             DateTime?        @map("last_used_at") @db.Timestamptz(3)
+  usageCount             Int              @default(0) @map("usage_count")
+  expiresAt              DateTime?        @map("expires_at") @db.Timestamptz(3)
+  revokedAt              DateTime?        @map("revoked_at") @db.Timestamptz(3)
+  rateLimitPerHour       Int              @default(60) @map("rate_limit_per_hour")
+  allowedScannerVersions Json?            @map("allowed_scanner_versions")
+  scanSessions           ScanSession[]
+
+  @@index([accountId])
+  @@index([keyPrefix])
+  @@index([status])
+  @@map("scanner_keys")
+}
+
+model ScanSession {
+  id                 String               @id @default(uuid()) @db.Uuid
+  accountId          String               @map("account_id") @db.Uuid
+  scannerKeyId       String               @map("scanner_key_id") @db.Uuid
+  deviceId           String?              @map("device_id") @db.Uuid
+  playerLabel        String?              @map("player_label") @db.VarChar(160)
+  status             ScanStatus           @default(KEY_VALIDATED)
+  scannerVersion     String               @map("scanner_version") @db.VarChar(40)
+  platform           String               @db.VarChar(40)
+  arch               String               @db.VarChar(40)
+  uploadTokenHash    String               @map("upload_token_hash")
+  nonceHash          String               @map("nonce_hash")
+  consentAcceptedAt  DateTime?            @map("consent_accepted_at") @db.Timestamptz(3)
+  startedAt          DateTime?            @map("started_at") @db.Timestamptz(3)
+  finishedAt         DateTime?            @map("finished_at") @db.Timestamptz(3)
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  expiresAt          DateTime             @map("expires_at") @db.Timestamptz(3)
+  sourceIp           String?              @map("source_ip") @db.VarChar(64)
+  ipCountry          String?              @map("ip_country") @db.VarChar(80)
+  ipRegion           String?              @map("ip_region") @db.VarChar(120)
+  riskScore          Int                  @default(0) @map("risk_score")
+  maxSeverity        Severity             @default(CLEAN) @map("max_severity")
+  reviewStatus       ScanReviewStatus     @default(UNREVIEWED) @map("review_status")
+  account            Account              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scannerKey         ScannerKey           @relation(fields: [scannerKeyId], references: [id], onDelete: Restrict)
+  device             Device?              @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  result             ScanResult?
+  findings           ScanFinding[]
+  modules            ScanModule[]
+  evidence           ScanEvidence[]
+  launcherProfiles   LauncherProfile[]
+  clientModAssets    ClientModAsset[]
+  processTimes       ProcessTime[]
+  fileLogs           FileLog[]
+  deviceMarkEvidence DeviceMarkEvidence[]
+  aiReview           AiReview?
+  aiReviewEvidence   AiReviewEvidence[]
+  automationEvents   AutomationEvent[]
+
+  @@index([accountId])
+  @@index([scannerKeyId])
+  @@index([deviceId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([riskScore])
+  @@index([maxSeverity])
+  @@map("scan_sessions")
+}
+
+model ScanResult {
+  id              String      @id @default(uuid()) @db.Uuid
+  scanSessionId   String      @unique @map("scan_session_id") @db.Uuid
+  accountId       String      @map("account_id") @db.Uuid
+  payloadHash     String      @map("payload_hash")
+  overview        Json
+  systemIdentity  Json        @map("system_identity")
+  networkSnapshot Json        @map("network_snapshot")
+  integrity       Json
+  processTimeline Json        @default("[]") @map("process_timeline")
+  exploreFiles    Json        @default("[]") @map("explore_files")
+  utilities       Json        @default("[]")
+  windowsItems    Json        @default("[]") @map("windows_items")
+  auditLog        Json        @default("[]") @map("audit_log")
+  loadedModules   Json        @default("[]") @map("loaded_modules")
+  processHandles  Json        @default("[]") @map("process_handles")
+  services        Json        @default("[]")
+  drivers         Json        @default("[]")
+  persistenceItems Json       @default("[]") @map("persistence_items")
+  eventLogs       Json        @default("[]") @map("event_logs")
+  defenderEvents  Json        @default("[]") @map("defender_events")
+  executionArtifacts Json     @default("[]") @map("execution_artifacts")
+  fileTriage      Json        @default("[]") @map("file_triage")
+  networkConnections Json     @default("[]") @map("network_connections")
+  dnsCache        Json        @default("[]") @map("dns_cache")
+  hostsEntries    Json        @default("[]") @map("hosts_entries")
+  forensicTimeline Json       @default("[]") @map("forensic_timeline")
+  rawPayloadRef   String?     @map("raw_payload_ref")
+  scanSession     ScanSession @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account         Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([accountId])
+  @@index([payloadHash])
+  @@map("scan_results")
+}
+
+model ScanFinding {
+  id                 String               @id @default(uuid()) @db.Uuid
+  scanSessionId      String               @map("scan_session_id") @db.Uuid
+  accountId          String               @map("account_id") @db.Uuid
+  ruleId             String?              @map("rule_id") @db.Uuid
+  category           FindingCategory
+  severity           Severity
+  title              String               @db.VarChar(200)
+  message            String
+  evidenceId         String?              @map("evidence_id") @db.Uuid
+  confidence         Int                  @default(100)
+  sourceModule       String?              @map("source_module") @db.VarChar(80)
+  metadata           Json?
+  scanSession        ScanSession          @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account            Account              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  evidence           ScanEvidence?        @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  rule               DetectionRule?       @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  deviceMarkEvidence DeviceMarkEvidence[]
+  aiReviewEvidence   AiReviewEvidence[]
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([category])
+  @@index([severity])
+  @@index([ruleId])
+  @@index([createdAt])
+  @@map("scan_findings")
+}
+
+model ScanModule {
+  id            String      @id @default(uuid()) @db.Uuid
+  scanSessionId String      @map("scan_session_id") @db.Uuid
+  accountId     String      @map("account_id") @db.Uuid
+  moduleName    String      @map("module_name") @db.VarChar(80)
+  status        String      @db.VarChar(24)
+  durationMs    Int?        @map("duration_ms")
+  errorCode     String?     @map("error_code") @db.VarChar(80)
+  errorMessage  String?     @map("error_message") @db.VarChar(500)
+  scanSession   ScanSession @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account       Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([moduleName])
+  @@index([status])
+  @@map("scan_modules")
+}
+
+model ScanEvidence {
+  id               String             @id @default(uuid()) @db.Uuid
+  scanSessionId    String             @map("scan_session_id") @db.Uuid
+  accountId        String             @map("account_id") @db.Uuid
+  clientEvidenceId String?            @map("client_evidence_id") @db.VarChar(120)
+  type             String             @db.VarChar(80)
+  title            String             @db.VarChar(200)
+  data             Json
+  storageRef       String?            @map("storage_ref") @db.VarChar(500)
+  scanSession      ScanSession        @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account          Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  findings         ScanFinding[]
+  aiReviewEvidence AiReviewEvidence[]
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([type])
+  @@index([clientEvidenceId])
+  @@map("scan_evidence")
+}
+
+model LauncherProfile {
+  id             String      @id @default(uuid()) @db.Uuid
+  scanSessionId  String      @map("scan_session_id") @db.Uuid
+  accountId      String      @map("account_id") @db.Uuid
+  profileName    String      @map("profile_name") @db.VarChar(160)
+  launcherType   String      @map("launcher_type") @db.VarChar(80)
+  version        String?     @db.VarChar(80)
+  channel        String?     @db.VarChar(80)
+  pathMasked     String?     @map("path_masked") @db.VarChar(500)
+  executableHash String?     @map("executable_hash") @db.VarChar(128)
+  publisher      String?     @db.VarChar(160)
+  status         String      @default("normal") @db.VarChar(40)
+  tags           Json        @default("[]")
+  installTime    DateTime?   @map("install_time") @db.Timestamptz(3)
+  updateTime     DateTime?   @map("update_time") @db.Timestamptz(3)
+  lastLaunchTime DateTime?   @map("last_launch_time") @db.Timestamptz(3)
+  metadata       Json?
+  scanSession    ScanSession @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account        Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([launcherType])
+  @@index([executableHash])
+  @@index([status])
+  @@map("launcher_profiles")
+}
+
+model ClientModAsset {
+  id             String      @id @default(uuid()) @db.Uuid
+  scanSessionId  String      @map("scan_session_id") @db.Uuid
+  accountId      String      @map("account_id") @db.Uuid
+  name           String      @db.VarChar(160)
+  sourceLauncher String?     @map("source_launcher") @db.VarChar(160)
+  pathMasked     String?     @map("path_masked") @db.VarChar(500)
+  fileCount      Int?        @map("file_count")
+  totalSize      BigInt?     @map("total_size")
+  createdTime    DateTime?   @map("created_time") @db.Timestamptz(3)
+  modifiedTime   DateTime?   @map("modified_time") @db.Timestamptz(3)
+  status         String      @default("normal") @db.VarChar(40)
+  metadata       Json?
+  scanSession    ScanSession @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account        Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([sourceLauncher])
+  @@index([status])
+  @@index([modifiedTime])
+  @@map("client_mod_assets")
+}
+
+model ProcessTime {
+  id            String      @id @default(uuid()) @db.Uuid
+  scanSessionId String      @map("scan_session_id") @db.Uuid
+  accountId     String      @map("account_id") @db.Uuid
+  processName   String      @map("process_name") @db.VarChar(160)
+  pathMasked    String?     @map("path_masked") @db.VarChar(500)
+  firstSeenAt   DateTime?   @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt    DateTime?   @map("last_seen_at") @db.Timestamptz(3)
+  startedAt     DateTime?   @map("started_at") @db.Timestamptz(3)
+  endedAt       DateTime?   @map("ended_at") @db.Timestamptz(3)
+  durationMs    Int?        @map("duration_ms")
+  source        String?     @db.VarChar(80)
+  status        String      @default("normal") @db.VarChar(40)
+  metadata      Json?
+  scanSession   ScanSession @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account       Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([processName])
+  @@index([startedAt])
+  @@index([status])
+  @@map("process_times")
+}
+
+model FileLog {
+  id             String      @id @default(uuid()) @db.Uuid
+  scanSessionId  String      @map("scan_session_id") @db.Uuid
+  accountId      String      @map("account_id") @db.Uuid
+  action         String      @db.VarChar(80)
+  pathMasked     String?     @map("path_masked") @db.VarChar(500)
+  oldPathMasked  String?     @map("old_path_masked") @db.VarChar(500)
+  newPathMasked  String?     @map("new_path_masked") @db.VarChar(500)
+  timestamp      DateTime?   @db.Timestamptz(3)
+  source         String?     @db.VarChar(120)
+  confidence     Int?
+  relatedProcess String?     @map("related_process") @db.VarChar(160)
+  severity       Severity    @default(INFO)
+  metadata       Json?
+  scanSession    ScanSession @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account        Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([action])
+  @@index([timestamp])
+  @@index([severity])
+  @@index([relatedProcess])
+  @@map("file_logs")
+}
+
+model Device {
+  id                    String                @id @default(uuid()) @db.Uuid
+  fingerprintHash       String                @unique @map("fingerprint_hash")
+  fingerprintPrefix     String                @map("fingerprint_prefix") @db.VarChar(24)
+  fingerprintVersion    String                @map("fingerprint_version") @db.VarChar(40)
+  fingerprintConfidence FingerprintConfidence @default(MEDIUM) @map("fingerprint_confidence")
+  firstSeenAt           DateTime              @default(now()) @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt            DateTime              @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  scanCount             Int                   @default(0) @map("scan_count")
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  accountLinks          DeviceAccountLink[]
+  marks                 DeviceMark[]
+  scanSessions          ScanSession[]
+
+  @@index([fingerprintPrefix])
+  @@index([lastSeenAt])
+  @@map("devices")
+}
+
+model DeviceAccountLink {
+  id          String   @id @default(uuid()) @db.Uuid
+  deviceId    String   @map("device_id") @db.Uuid
+  accountId   String   @map("account_id") @db.Uuid
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  scanCount   Int      @default(0) @map("scan_count")
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, accountId])
+  @@index([accountId])
+  @@map("device_account_links")
+}
+
+model DeviceMark {
+  id          String               @id @default(uuid()) @db.Uuid
+  deviceId    String               @map("device_id") @db.Uuid
+  scope       DeviceMarkScope
+  accountId   String?              @map("account_id") @db.Uuid
+  status      DeviceMarkStatus
+  reason      String
+  severity    Severity             @default(WARNING)
+  markedById  String?              @map("marked_by") @db.Uuid
+  markedAt    DateTime             @default(now()) @map("marked_at") @db.Timestamptz(3)
+  expiresAt   DateTime?            @map("expires_at") @db.Timestamptz(3)
+  revokedAt   DateTime?            @map("revoked_at") @db.Timestamptz(3)
+  revokedById String?              @map("revoked_by") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  device      Device               @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  account     Account?             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  markedBy    User?                @relation("DeviceMarkMarkedBy", fields: [markedById], references: [id], onDelete: SetNull)
+  revokedBy   User?                @relation("DeviceMarkRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  evidence    DeviceMarkEvidence[]
+
+  @@index([deviceId])
+  @@index([accountId])
+  @@index([scope])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("device_marks")
+}
+
+model DeviceMarkEvidence {
+  id            String       @id @default(uuid()) @db.Uuid
+  deviceMarkId  String       @map("device_mark_id") @db.Uuid
+  scanSessionId String?      @map("scan_session_id") @db.Uuid
+  findingId     String?      @map("finding_id") @db.Uuid
+  note          String?
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  deviceMark    DeviceMark   @relation(fields: [deviceMarkId], references: [id], onDelete: Cascade)
+  scanSession   ScanSession? @relation(fields: [scanSessionId], references: [id], onDelete: SetNull)
+  finding       ScanFinding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+
+  @@index([deviceMarkId])
+  @@index([scanSessionId])
+  @@map("device_mark_evidence")
+}
+
+model DetectionRule {
+  id          String             @id @default(uuid()) @db.Uuid
+  accountId   String?            @map("account_id") @db.Uuid
+  scope       DetectionRuleScope
+  name        String             @db.VarChar(160)
+  type        DetectionRuleType
+  category    FindingCategory    @default(CUSTOM_DETECTION)
+  severity    Severity           @default(WARNING)
+  enabled     Boolean            @default(true)
+  ruleConfig  Json               @map("rule_config")
+  hitCount    Int                @default(0) @map("hit_count")
+  createdById String?            @map("created_by") @db.Uuid
+  managedBy   String?            @map("managed_by") @db.VarChar(80)
+  managedRefId String?           @map("managed_ref_id") @db.VarChar(160)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime?          @map("deleted_at") @db.Timestamptz(3)
+  account     Account?           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdBy   User?              @relation("DetectionRuleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  findings    ScanFinding[]
+
+  @@index([accountId])
+  @@index([scope])
+  @@index([type])
+  @@index([category])
+  @@index([enabled])
+  @@index([managedBy])
+  @@index([managedRefId])
+  @@unique([managedBy, managedRefId, type])
+  @@index([deletedAt])
+  @@map("detection_rules")
+}
+
+model ExecutorIntelligenceSetting {
+  id              String   @id @default("global") @db.VarChar(40)
+  enabled         Boolean  @default(true)
+  sourceUrl       String   @default("https://executors.online/api/executors") @map("source_url") @db.VarChar(500)
+  fallbackUrl     String   @default("https://weao.xyz/api/status/exploits") @map("fallback_url") @db.VarChar(500)
+  cacheTtlSeconds Int      @default(86400) @map("cache_ttl_seconds")
+  attribution     String   @default("Executors.Online / WhatExpsAre.Online") @db.VarChar(200)
+  lastSyncAt      DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  lastSuccessAt   DateTime? @map("last_success_at") @db.Timestamptz(3)
+  lastError       String?  @map("last_error") @db.VarChar(500)
+  itemCount       Int      @default(0) @map("item_count")
+  windowsItemCount Int     @default(0) @map("windows_item_count")
+  generatedRuleCount Int   @default(0) @map("generated_rule_count")
+  updatedById     String?  @map("updated_by") @db.Uuid
+  updatedBy       User?    @relation("ExecutorIntelUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("executor_intelligence_settings")
+}
+
+model ExecutorIntelligenceItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  title            String   @db.VarChar(160)
+  slug             String   @db.VarChar(180)
+  platform         String   @db.VarChar(80)
+  extype           String?  @db.VarChar(80)
+  detected         Boolean  @default(false)
+  updateStatus     Boolean  @default(false) @map("update_status")
+  version          String?  @db.VarChar(120)
+  updatedDateText  String?  @map("updated_date_text") @db.VarChar(160)
+  websiteHost      String?  @map("website_host") @db.VarChar(160)
+  sourceName       String   @map("source_name") @db.VarChar(120)
+  sourceUrl        String   @map("source_url") @db.VarChar(500)
+  sourceMetadata   Json     @default("{}") @map("source_metadata")
+  generatedRuleIds Json     @default("[]") @map("generated_rule_ids")
+  enabled          Boolean  @default(true)
+  lastSeenAt       DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([sourceName, slug])
+  @@index([platform])
+  @@index([extype])
+  @@index([enabled])
+  @@index([detected])
+  @@index([updateStatus])
+  @@index([lastSeenAt])
+  @@map("executor_intelligence_items")
+}
+
+model DetectionSample {
+  id           String                  @id @default(uuid()) @db.Uuid
+  accountId    String?                 @map("account_id") @db.Uuid
+  uploadedById String?                 @map("uploaded_by") @db.Uuid
+  fileName     String                  @map("file_name") @db.VarChar(240)
+  fileHash     String                  @map("file_hash")
+  storageRef   String?                 @map("storage_ref") @db.VarChar(500)
+  sizeBytes    Int                     @map("size_bytes")
+  status       DetectionSampleStatus
+  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt    DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  account      Account?                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  uploadedBy   User?                   @relation("DetectionSampleUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  strings      DetectionSampleString[]
+
+  @@index([accountId])
+  @@index([fileHash])
+  @@index([status])
+  @@map("detection_samples")
+}
+
+model DetectionSampleString {
+  id              String          @id @default(uuid()) @db.Uuid
+  sampleId        String          @map("sample_id") @db.Uuid
+  valueHash       String          @map("value_hash")
+  preview         String          @db.VarChar(180)
+  length          Int
+  selectedForRule Boolean         @default(false) @map("selected_for_rule")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  sample          DetectionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  @@index([sampleId])
+  @@index([valueHash])
+  @@map("detection_sample_strings")
+}
+
+model AiReview {
+  id                     String              @id @default(uuid()) @db.Uuid
+  scanSessionId          String              @unique @map("scan_session_id") @db.Uuid
+  accountId              String              @map("account_id") @db.Uuid
+  assessment             String              @db.VarChar(80)
+  confidence             Int
+  summaryForModerator    String              @map("summary_for_moderator")
+  summaryForPlayer       String?             @map("summary_for_player")
+  recommendedAction      AiRecommendedAction @map("recommended_action")
+  keyIndicators          Json                @default("[]") @map("key_indicators")
+  possibleFalsePositives Json                @default("[]") @map("possible_false_positives")
+  contradictions         Json                @default("[]")
+  moderatorChecklist     Json                @default("[]") @map("moderator_checklist")
+  questionsForPlayer     Json                @default("[]") @map("questions_for_player")
+  evidenceReferences     Json                @default("[]") @map("evidence_references")
+  model                  String?             @db.VarChar(120)
+  promptVersion          String?             @map("prompt_version") @db.VarChar(80)
+  inputHash              String?             @map("input_hash") @db.VarChar(128)
+  generatedAt            DateTime            @map("generated_at") @db.Timestamptz(3)
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  scanSession            ScanSession         @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account                Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  evidenceLinks          AiReviewEvidence[]
+
+  @@index([accountId])
+  @@index([assessment])
+  @@index([recommendedAction])
+  @@index([generatedAt])
+  @@map("ai_reviews")
+}
+
+model AiReviewEvidence {
+  id            String        @id @default(uuid()) @db.Uuid
+  aiReviewId    String        @map("ai_review_id") @db.Uuid
+  scanSessionId String        @map("scan_session_id") @db.Uuid
+  findingId     String?       @map("finding_id") @db.Uuid
+  evidenceId    String?       @map("evidence_id") @db.Uuid
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  aiReview      AiReview      @relation(fields: [aiReviewId], references: [id], onDelete: Cascade)
+  scanSession   ScanSession   @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  finding       ScanFinding?  @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  evidence      ScanEvidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+
+  @@index([aiReviewId])
+  @@index([scanSessionId])
+  @@index([findingId])
+  @@index([evidenceId])
+  @@map("ai_review_evidence")
+}
+
+model AutomationEvent {
+  id             String                @id @default(uuid()) @db.Uuid
+  eventType      String                @map("event_type") @db.VarChar(80)
+  idempotencyKey String                @unique @map("idempotency_key") @db.VarChar(160)
+  scanSessionId  String?               @map("scan_session_id") @db.Uuid
+  accountId      String?               @map("account_id") @db.Uuid
+  status         AutomationEventStatus @default(PENDING)
+  payload        Json
+  attemptCount   Int                   @default(0) @map("attempt_count")
+  lastError      String?               @map("last_error")
+  lastAttemptAt  DateTime?             @map("last_attempt_at") @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  scanSession    ScanSession?          @relation(fields: [scanSessionId], references: [id], onDelete: Cascade)
+  account        Account?              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([eventType])
+  @@index([scanSessionId])
+  @@index([accountId])
+  @@index([status])
+  @@index([updatedAt])
+  @@map("automation_events")
+}
+
+model MonitoringEvent {
+  id        String             @id @default(uuid()) @db.Uuid
+  service   String             @db.VarChar(80)
+  eventType String             @map("event_type") @db.VarChar(120)
+  severity  MonitoringSeverity @default(INFO)
+  message   String
+  metadata  Json?
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([service])
+  @@index([eventType])
+  @@index([severity])
+  @@index([createdAt])
+  @@map("monitoring_events")
+}
+
+model SecurityEvent {
+  id                 String              @id @default(uuid()) @db.Uuid
+  accountId          String?             @map("account_id") @db.Uuid
+  actorUserId        String?             @map("actor_user_id") @db.Uuid
+  eventType          String              @map("event_type") @db.VarChar(120)
+  severity           MonitoringSeverity
+  sourceIp           String?             @map("source_ip") @db.VarChar(64)
+  message            String
+  metadata           Json?
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  account            Account?            @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  actor              User?               @relation("SecurityEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  alertNotifications AlertNotification[]
+
+  @@index([accountId])
+  @@index([actorUserId])
+  @@index([eventType])
+  @@index([severity])
+  @@index([sourceIp])
+  @@index([createdAt])
+  @@map("security_events")
+}
+
+model AlertNotification {
+  id              String                  @id @default(uuid()) @db.Uuid
+  securityEventId String?                 @map("security_event_id") @db.Uuid
+  channel         String                  @db.VarChar(40)
+  status          AlertNotificationStatus @default(PENDING)
+  severity        MonitoringSeverity
+  service         String                  @db.VarChar(80)
+  eventType       String                  @map("event_type") @db.VarChar(120)
+  idempotencyKey  String                  @unique @map("idempotency_key") @db.VarChar(180)
+  payloadRedacted Json                    @map("payload_redacted")
+  attemptCount    Int                     @default(0) @map("attempt_count")
+  lastError       String?                 @map("last_error")
+  lastAttemptAt   DateTime?               @map("last_attempt_at") @db.Timestamptz(3)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  securityEvent   SecurityEvent?          @relation(fields: [securityEventId], references: [id], onDelete: Cascade)
+
+  @@index([securityEventId])
+  @@index([channel])
+  @@index([status])
+  @@index([severity])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("alert_notifications")
+}
+
+model RetentionSetting {
+  id                    String   @id @default("global") @db.VarChar(40)
+  scanResultsDays       Int      @default(90) @map("scan_results_days")
+  findingsEvidenceDays  Int      @default(90) @map("findings_evidence_days")
+  screenshotsDays       Int      @default(30) @map("screenshots_days")
+  detectionSamplesDays  Int      @default(7) @map("detection_samples_days")
+  monitoringEventsDays  Int      @default(30) @map("monitoring_events_days")
+  securityEventsDays    Int      @default(180) @map("security_events_days")
+  auditLogsDays         Int      @default(365) @map("audit_logs_days")
+  updatedById           String?  @map("updated_by") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("retention_settings")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  accountId   String?  @map("account_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(80)
+  entityType  String   @map("entity_type") @db.VarChar(80)
+  entityId    String?  @map("entity_id") @db.VarChar(120)
+  before      Json?
+  after       Json?
+  sourceIp    String?  @map("source_ip") @db.VarChar(64)
+  account     Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([accountId])
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

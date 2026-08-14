@@ -12,6 +12,10 @@ build/
 .next/
 out/
 coverage/
+playwright-report/
+test-results/
+*.exe
+*.tsbuildinfo
 
 # Logs
 *.log
@@ -19,6 +23,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Planning/source-of-truth docs kept local
+PRD*.md
+*_PHASE_PLAN.md
+DATABASE_SCHEMA.md
+TECH_STACK_LIBRARIES.md
+json/
 
 # OS/editor files
 .DS_Store

@@ -1,0 +1,169 @@
+{
+  "name": "SideraScan - Security Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "siderascan-security-alert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "5ff2fe4a-3a5f-4d64-a1dd-c2765c111e56",
+      "name": "security.alert webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        300
+      ],
+      "webhookId": "siderascan-security-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst crypto = require('crypto');\n\nconst expectedEvent = 'security.alert';\nconst input = $input.first().json;\nconst headersInput = input.headers || {};\nconst headers = {};\n\nfor (const [key, value] of Object.entries(headersInput)) {\n  headers[String(key).toLowerCase()] = Array.isArray(value) ? String(value[0]) : String(value);\n}\n\nfunction reject(message) {\n  const error = new Error(message);\n  error.name = 'SideraScanWebhookRejected';\n  throw error;\n}\n\nconst timestamp = headers['x-siderascan-timestamp'];\nconst signature = headers['x-siderascan-signature'];\nconst idempotencyKey = headers['x-idempotency-key'];\nconst eventHeader = headers['x-siderascan-event'];\nconst body = input.body || {};\n\nif (!timestamp || !signature || !idempotencyKey) reject('Missing required SideraScan webhook headers.');\nif (eventHeader && eventHeader !== expectedEvent) reject('Unexpected SideraScan event: ' + eventHeader);\nif (body.event && body.event !== expectedEvent) reject('Unexpected body event: ' + body.event);\nif (!/^sha256=[a-f0-9]{64}$/i.test(signature)) reject('Invalid SideraScan signature format.');\n\nconst unixSeconds = Number(timestamp);\nif (!Number.isFinite(unixSeconds)) reject('Invalid SideraScan timestamp.');\n\nconst tolerance = Number(readEnv('SIDERASCAN_SIGNATURE_TOLERANCE_SECONDS', '300'));\nconst ageSeconds = Math.abs(Date.now() / 1000 - unixSeconds);\nif (ageSeconds > tolerance) reject('Expired SideraScan signature.');\n\nconst secret = readEnv('SIDERASCAN_WEBHOOK_SECRET');\nif (!secret || secret.includes('<')) reject('SideraScan webhook secret is not configured in n8n.');\n\nconst signedBody = JSON.stringify(body ?? {});\nconst expectedSignature = 'sha256=' + crypto\n  .createHmac('sha256', secret)\n  .update(timestamp + '.' + signedBody)\n  .digest('hex');\n\nconst providedBuffer = Buffer.from(signature);\nconst expectedBuffer = Buffer.from(expectedSignature);\nif (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) reject('Invalid SideraScan signature.');\n\nreturn [{\n  json: {\n    response: {\n      status: 'accepted',\n      event: expectedEvent,\n      idempotencyKey\n    },\n    request: {\n      body,\n      idempotencyKey,\n      event: expectedEvent\n    }\n  }\n}];"
+      },
+      "id": "e32fbdf1-3980-4552-a6f6-a9bd4f0600cf",
+      "name": "Verify SideraScan signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "f3fbdd17-2428-4291-b73b-4d0a9de27f47",
+      "name": "Accepted response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        760,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst input = $input.first().json;\nconst body = input.request?.body || {};\n\nconst sensitiveKeyPattern = /scanner\\s*key|scanner_key|upload\\s*token|upload_token|\\bnonce\\b|raw\\s*hwid|machineguid|machine_guid|hardware\\s*serial|\\bserial\\b|password|passwd|cookie|clipboard|screenshot|secret|authorization|bearer/i;\nconst privatePathPattern = /([A-Za-z]:\\\\Users\\\\)([^\\\\\\s]+)(\\\\?)/g;\nconst unixPrivatePathPattern = /(\\/Users\\/)([^\\/\\s]+)(\\/?)/g;\n\nfunction truncate(value, max = 300) {\n  if (value === undefined || value === null) return null;\n  return String(value).slice(0, max);\n}\n\nfunction maskString(value) {\n  return truncate(value, 500)\n    .replace(privatePathPattern, '$1***$3')\n    .replace(unixPrivatePathPattern, '$1***$3');\n}\n\nfunction sanitize(value, depth = 0) {\n  if (depth > 3) return '[truncated]';\n  if (value === undefined || value === null) return null;\n  if (typeof value === 'string') return maskString(value);\n  if (typeof value === 'number' || typeof value === 'boolean') return value;\n  if (Array.isArray(value)) return value.slice(0, 10).map((item) => sanitize(item, depth + 1));\n  if (typeof value === 'object') {\n    const output = {};\n    for (const [key, child] of Object.entries(value).slice(0, 25)) {\n      if (sensitiveKeyPattern.test(String(key))) {\n        output[key] = '[redacted]';\n      } else {\n        output[key] = sanitize(child, depth + 1);\n      }\n    }\n    return output;\n  }\n  return truncate(value);\n}\n\nconst severity = String(body.severity || 'INFO').toUpperCase();\nconst alert = {\n  event: 'security.alert',\n  severity,\n  service: truncate(body.service || 'siderascan', 80),\n  eventType: truncate(body.eventType || body.type || 'SECURITY_EVENT', 120),\n  message: maskString(body.message || 'Security alert received.'),\n  dashboardUrl: truncate(body.dashboardUrl || '', 500),\n  createdAt: truncate(body.createdAt || new Date().toISOString(), 80),\n  idempotencyKey: truncate(input.request?.idempotencyKey || '', 160),\n  metadata: sanitize(body.metadata || {})\n};\n\nreturn [{ json: { alert } }];"
+      },
+      "id": "81abdf7b-8234-41aa-a6df-c1898c83ee88",
+      "name": "Normalize redacted alert payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst input = $input.first().json;\nconst alert = input.alert;\nconst severity = String(alert?.severity || 'INFO').toUpperCase();\nconst discordEnabled = String(readEnv('DISCORD_SECURITY_ALERT_WEBHOOK_ENABLED', 'false')).toLowerCase() === 'true';\nconst discordUrl = readEnv('DISCORD_SECURITY_ALERT_WEBHOOK_URL');\nconst discordConfigured = /^https:\\/\\/discord(?:app)?\\.com\\/api\\/webhooks\\//i.test(discordUrl);\nconst shouldSend = discordEnabled && discordConfigured && ['HIGH', 'CRITICAL'].includes(severity);\n\nif (!shouldSend) {\n  return [];\n}\n\nreturn [{ json: { alert } }];"
+      },
+      "id": "d36fe7c5-fd85-4d7d-99bf-f8bbd61d1775",
+      "name": "Severity filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof $vars !== 'undefined' && $vars && $vars[name]) return $vars[name];\n  } catch (error) {}\n  try {\n    const processModule = require('process');\n    if (processModule.env && processModule.env[name]) return processModule.env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst alert = $input.first().json.alert;\nconst severity = String(alert.severity || 'INFO').toUpperCase();\nconst colorBySeverity = {\n  CRITICAL: 12458077,\n  HIGH: 16744192\n};\n\nfunction field(name, value, inline = true) {\n  return {\n    name,\n    value: String(value || 'Unknown').slice(0, 1024),\n    inline\n  };\n}\n\nconst metadataSummary = JSON.stringify(alert.metadata || {}, null, 2).slice(0, 900);\nconst description = String(alert.message || 'Security alert received.').slice(0, 1800);\nconst title = '[' + severity + '] ' + String(alert.eventType || 'Security alert').slice(0, 180);\nconst embed = {\n  title,\n  description,\n  color: colorBySeverity[severity] || 16753920,\n  fields: [\n    field('Service', alert.service),\n    field('Event Type', alert.eventType),\n    field('Created At', alert.createdAt),\n    field('Idempotency', alert.idempotencyKey, false),\n    field('Metadata', metadataSummary ? '```json\\n' + metadataSummary + '\\n```' : 'No metadata.', false)\n  ],\n  footer: {\n    text: 'SideraScan Security Alert'\n  },\n  timestamp: new Date(alert.createdAt || Date.now()).toISOString()\n};\n\nif (alert.dashboardUrl && /^https?:\\/\\//i.test(alert.dashboardUrl)) {\n  embed.url = alert.dashboardUrl;\n}\n\nreturn [{\n  json: {\n    discordPayload: {\n      username: 'SideraScan Alerts',\n      embeds: [embed]\n    }\n  }\n}];"
+      },
+      "id": "47986eec-4b58-4140-9c1b-e51cdbcd4f29",
+      "name": "Format Discord alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function readEnv(name, fallback = '') {\n  try {\n    if (typeof $env !== 'undefined' && $env && $env[name]) return $env[name];\n  } catch (error) {}\n  try {\n    if (typeof process !== 'undefined' && process.env && process.env[name]) return process.env[name];\n  } catch (error) {}\n  return fallback;\n}\n\nconst https = require('https');\nconst input = $input.first().json;\nconst webhookUrl = String(readEnv('DISCORD_SECURITY_ALERT_WEBHOOK_URL') || '').trim();\n\nfunction assertDiscordWebhookURL(value) {\n  const lower = String(value || '').toLowerCase();\n  const ok = lower.startsWith('https://discord.com/api/webhooks/') || lower.startsWith('https://discordapp.com/api/webhooks/');\n  if (!ok) throw new Error('Discord security alert webhook URL is not configured.');\n  return value;\n}\n\nfunction postJSON(url, payload) {\n  return new Promise((resolve, reject) => {\n    const body = JSON.stringify(payload);\n    const request = https.request(url, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'Content-Length': Buffer.byteLength(body)\n      },\n      timeout: 30000\n    }, (response) => {\n      response.resume();\n      response.on('end', () => resolve(response.statusCode || 0));\n    });\n    request.on('timeout', () => request.destroy(new Error('Discord alert delivery timed out.')));\n    request.on('error', reject);\n    request.write(body);\n    request.end();\n  });\n}\n\nconst statusCode = await postJSON(assertDiscordWebhookURL(webhookUrl), input.discordPayload);\nif (statusCode < 200 || statusCode >= 300) {\n  throw new Error('Discord alert delivery failed with HTTP ' + statusCode);\n}\n\nreturn [{ json: { discordSent: true, statusCode } }];"
+      },
+      "id": "801103dc-cef1-4d4b-9388-4cd8daee6b67",
+      "name": "Send Discord alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "security.alert webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify SideraScan signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify SideraScan signature": {
+      "main": [
+        [
+          {
+            "node": "Accepted response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize redacted alert payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize redacted alert payload": {
+      "main": [
+        [
+          {
+            "node": "Severity filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Severity filter": {
+      "main": [
+        [
+          {
+            "node": "Format Discord alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discord alert": {
+      "main": [
+        [
+          {
+            "node": "Send Discord alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
